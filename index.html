@@ -384,6 +384,45 @@ body{
   position:absolute;left:0;top:14px;font-family:var(--mono);font-size:11px;
   color:#7fd9ff;letter-spacing:.1em;opacity:.9;
 }
+/* 须知：编辑按钮 / 编辑态 */
+.pop .pedit{
+  position:absolute;top:12px;right:44px;width:30px;height:30px;padding:0;
+  display:none;align-items:center;justify-content:center;cursor:pointer;
+  border-radius:8px;border:1px solid rgba(150,225,255,.28);
+  background:rgba(120,205,245,.08);color:#8fd6f0;
+  transition:.3s;
+}
+.pop .pedit.on{display:flex}
+.pop .pedit:hover{color:#dff8ff;border-color:rgba(190,245,255,.6);background:rgba(140,220,255,.16)}
+.pop .pedit svg{width:15px;height:15px;display:block}
+.rules.editing li{
+  border-bottom:0;padding:10px 0 10px 46px;
+}
+.rules.editing textarea{
+  width:100%;box-sizing:border-box;resize:vertical;min-height:52px;
+  font-family:var(--sans);font-size:14.5px;line-height:1.85;color:#e6f7ff;letter-spacing:.03em;
+  padding:9px 11px;border-radius:9px;
+  border:1px solid rgba(150,225,255,.22);
+  background:rgba(6,26,42,.55);
+  outline:none;transition:.3s;
+}
+.rules.editing textarea:focus{border-color:rgba(180,240,255,.62);background:rgba(9,34,54,.72);box-shadow:0 0 0 3px rgba(120,215,255,.09)}
+.rules.editing li::before{top:26px}
+.rules-empty{font-size:13px;color:#6f9ab0;font-family:var(--mono);letter-spacing:.1em;padding:18px 0}
+.pfoot{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:16px}
+.pfoot .pbtn{padding:11px 10px;text-align:center}
+.pfoot .pbtn:nth-child(1){grid-column:1}
+.pfoot .pbtn:nth-child(2){grid-column:2}
+@media (min-width:560px){.pfoot{display:flex;justify-content:flex-end}.pfoot .pbtn{padding:9px 16px}}
+.pbtn{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.2em;cursor:pointer;
+  padding:9px 16px;border-radius:9px;border:1px solid rgba(150,225,255,.24);
+  background:rgba(120,205,245,.07);color:#a9dced;transition:.3s;
+}
+.pbtn:hover{color:#eaf9ff;border-color:rgba(190,245,255,.55);background:rgba(140,220,255,.14)}
+.pbtn.pri{border-color:rgba(160,240,255,.5);color:#d8f7ff;background:rgba(110,215,255,.16)}
+.pbtn.gh{background:transparent;color:#75a2b8}
+.pnote{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;color:#5d7f92;margin-top:10px;line-height:1.7}
 /* 联系方式 */
 .contact{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
 .ct{
@@ -640,6 +679,11 @@ body{
 <!-- 弹层 -->
 <div id="overlay"><div class="pop">
   <div class="x" id="popX">✕</div>
+  <button class="pedit" id="popEdit" title="编辑下单须知" aria-label="编辑下单须知">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 20h4.2L19.3 8.9a2 2 0 0 0 0-2.8l-1.4-1.4a2 2 0 0 0-2.8 0L4 15.8V20z"/><path d="M13.8 6.2l4 4"/>
+    </svg>
+  </button>
   <div class="kicker" id="popK">SKILL</div>
   <h3 id="popT">—</h3>
   <div class="sub" id="popS"></div>
@@ -1065,9 +1109,93 @@ document.addEventListener('pointerdown', e=>{
 const overlay = document.getElementById('overlay');
 const popK = document.getElementById('popK'), popT = document.getElementById('popT'),
       popS = document.getElementById('popS'), popBody = document.getElementById('popBody');
+/* ===== 下单须知：可自行编辑（保存在本机浏览器） ===== */
+const RULE_KEY = 'blank_order_rules_v1';
+const RULES_DEFAULT = [
+  '喜少女少御御字辈，萎辣条中gay，婉拒冷暴力。',
+  '约定时间超 15 分钟未出现，默认算入时长；我们的时间是相互的，介意误点。',
+  '有喜雷板卡请提前告知。',
+  '请做对应单该做的事情。',
+  '婉拒退单、客诉率非常高的；能力有限。'
+];
+function rulesLoad(){
+  try{
+    const raw = localStorage.getItem(RULE_KEY);
+    if(!raw) return RULES_DEFAULT.slice();
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : RULES_DEFAULT.slice();
+  }catch(e){ return RULES_DEFAULT.slice(); }
+}
+function rulesSave(arr){
+  try{
+    if(!arr.length || arr.join('') === RULES_DEFAULT.join('')) localStorage.removeItem(RULE_KEY);
+    else localStorage.setItem(RULE_KEY, JSON.stringify(arr));
+    return true;
+  }catch(e){ return false; }
+}
+function esc(t){ return String(t).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function orderRulesHtml(){
+  const arr = rulesLoad();
+  if(!arr.length) return '<div class="rules-empty">// 暂无条款</div>';
+  return '<ol class="rules">' + arr.map(t=>'<li>'+esc(t)+'</li>').join('') + '</ol>';
+}
+/* 编辑态：每条一个输入框 */
+function enterOrderEdit(){
+  const arr = rulesLoad();
+  popBody.innerHTML = '<ol class="rules editing" id="ruleEdit">' +
+    (arr.length?arr:['']).map(t=>'<li><textarea rows="2" placeholder="写一条须知…">'+esc(t)+'</textarea></li>').join('') +
+    '</ol>' +
+    '<div class="pfoot">' +
+      '<button class="pbtn gh" id="rAdd">＋ 添加一条</button>' +
+      '<button class="pbtn gh" id="rReset">恢复默认</button>' +
+      '<button class="pbtn" id="rCancel">取消</button>' +
+      '<button class="pbtn pri" id="rSave">保存</button>' +
+    '</div>' +
+    '<div class="pnote">内容保存在当前浏览器的本地存储中，仅自己可见；换设备或清除浏览器数据后会回到默认内容。</div>';
+  document.getElementById('popEdit').classList.remove('on');
+  sfx.tap();
+  const list = document.getElementById('ruleEdit');
+  const tas = ()=>Array.from(list.querySelectorAll('textarea'));
+  const auto = t=>{ t.style.height='auto'; t.style.height=Math.max(52,t.scrollHeight+2)+'px'; };
+  tas().forEach(t=>{ auto(t); t.addEventListener('input', ()=>auto(t)); });
+  const last = tas().pop(); if(last) last.focus();
+  list.addEventListener('keydown', e=>{
+    if(e.key==='Enter' && (e.metaKey||e.ctrlKey)){ e.preventDefault(); document.getElementById('rSave').click(); }
+  });
+  document.getElementById('rAdd').addEventListener('click', ()=>{
+    const li = document.createElement('li');
+    li.innerHTML = '<textarea rows="2" placeholder="写一条须知…"></textarea>';
+    list.appendChild(li);
+    const t = li.querySelector('textarea'); auto(t); t.focus(); sfx.key();
+  });
+  document.getElementById('rReset').addEventListener('click', ()=>{
+    if(!confirm('恢复成默认的 5 条须知？（你改过的内容会被清除）')) return;
+    rulesSave([]);
+    popBody.innerHTML = orderRulesHtml();
+    exitOrderEdit(true);
+  });
+  document.getElementById('rCancel').addEventListener('click', ()=>{
+    popBody.innerHTML = orderRulesHtml();
+    exitOrderEdit(true);
+  });
+  document.getElementById('rSave').addEventListener('click', ()=>{
+    const arr = tas().map(t=>t.value.trim()).filter(Boolean);
+    const ok = rulesSave(arr);
+    popBody.innerHTML = orderRulesHtml();
+    exitOrderEdit(true);
+    sfx.chime();
+    if(!ok) alert('浏览器拒绝写入本地存储（可能开了无痕模式），本次修改未能保存。');
+  });
+}
+function exitOrderEdit(showBtn){
+  document.getElementById('popEdit').classList.toggle('on', !!showBtn && popT.textContent === '下单须知');
+}
+document.getElementById('popEdit').addEventListener('click', e=>{ e.stopPropagation(); enterOrderEdit(); });
+
 function openPop(kicker, title, sub, html){
   popK.textContent = kicker; popT.textContent = title; popS.textContent = sub;
   popBody.innerHTML = html; overlay.classList.add('on');
+  document.getElementById('popEdit').classList.toggle('on', title === '下单须知');
 }
 function closePop(){ overlay.classList.remove('on'); }
 document.getElementById('popX').addEventListener('click', ()=>{ sfx.tap(); closePop(); });
@@ -1088,13 +1216,7 @@ function openGroup(g){
 document.getElementById('orderEntry').addEventListener('click', ()=>{
   sfx.tap();
   openPop('ORDER · TERMS', '下单须知', 'PLEASE READ BEFORE ORDER',
-    `<ol class="rules">
-      <li>喜少女少御御字辈，萎辣条中gay，婉拒冷暴力。</li>
-      <li>约定时间超 15 分钟未出现，默认算入时长；我们的时间是相互的，介意误点。</li>
-      <li>有喜雷板卡请提前告知。</li>
-      <li>请做对应单该做的事情。</li>
-      <li>婉拒退单、客诉率非常高的；能力有限。</li>
-    </ol>`);
+    orderRulesHtml());
 });
 /* 复制微信 */
 document.querySelectorAll('[data-copy]').forEach(el=>{
