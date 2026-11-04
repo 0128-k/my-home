@@ -1110,8 +1110,12 @@ document.addEventListener('pointerdown', e=>{
 const overlay = document.getElementById('overlay');
 const popK = document.getElementById('popK'), popT = document.getElementById('popT'),
       popS = document.getElementById('popS'), popBody = document.getElementById('popBody');
-/* ===== 下单须知：可自行编辑（保存在本机浏览器） ===== */
-const RULE_KEY = 'blank_order_rules_v1';
+/* ===== 下单须知：在线编辑（所有人可见） =====
+   内容存在仓库根目录 rules.json，页面加载时拉取；
+   保存时通过 GitHub API 写回仓库，Pages 重新构建后所有人可见。 */
+const GH_REPO   = '0128-k/my-home';
+const GH_API    = 'https://api.github.com/repos/' + GH_REPO;
+const RULES_URL = 'rules.json?v=' + Date.now();
 const RULES_DEFAULT = [
   '喜少女少御御字辈，萎辣条中gay，婉拒冷暴力。',
   '约定时间超 15 分钟未出现，默认算入时长；我们的时间是相互的，介意误点。',
@@ -1119,47 +1123,49 @@ const RULES_DEFAULT = [
   '请做对应单该做的事情。',
   '婉拒退单、客诉率非常高的；能力有限。'
 ];
-function rulesLoad(){
-  try{
-    const raw = localStorage.getItem(RULE_KEY);
-    if(!raw) return RULES_DEFAULT.slice();
-    const arr = JSON.parse(raw);
-    return Array.isArray(arr) ? arr : RULES_DEFAULT.slice();
-  }catch(e){ return RULES_DEFAULT.slice(); }
-}
-function rulesSave(arr){
-  try{
-    if(!arr.length || arr.join('') === RULES_DEFAULT.join('')) localStorage.removeItem(RULE_KEY);
-    else localStorage.setItem(RULE_KEY, JSON.stringify(arr));
-    return true;
-  }catch(e){ return false; }
+/* ---- 待配置（由维护者填写后重新发布） ---- */
+const EDIT_PASS = '';   /* 编辑口令，留空 = 未启用 */
+const GIT_TOKEN = '';   /* 细粒度令牌（仅本仓库 Contents 读写），留空 = 未启用 */
+const EDIT_READY = !!(EDIT_PASS && GIT_TOKEN);
+
+let RULES = RULES_DEFAULT.slice();
+fetch(RULES_URL).then(r=>r.ok?r.json():null).then(j=>{
+  if(j && Array.isArray(j.rules) && j.rules.length) RULES = j.rules.map(String);
+}).catch(()=>{});
+function orderRulesHtml(){
+  if(!RULES.length) return '<div class="rules-empty">// 暂无条款</div>';
+  return '<ol class="rules">' + RULES.map(t=>'<li>'+esc(t)+'</li>').join('') + '</ol>';
 }
 function esc(t){ return String(t).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
-function orderRulesHtml(){
-  const arr = rulesLoad();
-  if(!arr.length) return '<div class="rules-empty">// 暂无条款</div>';
-  return '<ol class="rules">' + arr.map(t=>'<li>'+esc(t)+'</li>').join('') + '</ol>';
+function passOk(){
+  if(!EDIT_READY){
+    alert('编辑功能尚未启用：还差「口令 / 令牌」配置。');
+    return false;
+  }
+  const p = prompt('请输入编辑口令');
+  if(p === null) return false;
+  if(p !== EDIT_PASS){ sfx.deny(); alert('口令不对'); return false; }
+  return true;
 }
 /* 编辑态：每条一个输入框 */
-function enterOrderEdit(){
-  const arr = rulesLoad();
+async function enterOrderEdit(){
+  if(!passOk()) return;
   popBody.innerHTML = '<ol class="rules editing" id="ruleEdit">' +
-    (arr.length?arr:['']).map(t=>'<li><textarea rows="2" placeholder="写一条须知…">'+esc(t)+'</textarea></li>').join('') +
+    (RULES.length?RULES:['']).map(t=>'<li><textarea rows="2" placeholder="写一条须知…">'+esc(t)+'</textarea></li>').join('') +
     '</ol>' +
     '<div class="pfoot">' +
       '<button class="pbtn gh" id="rAdd">＋ 添加一条</button>' +
       '<button class="pbtn gh" id="rReset">恢复默认</button>' +
       '<button class="pbtn" id="rCancel">取消</button>' +
-      '<button class="pbtn pri" id="rSave">保存</button>' +
+      '<button class="pbtn pri" id="rSave">保存上线</button>' +
     '</div>' +
-    '<div class="pnote">内容保存在当前浏览器的本地存储中，仅自己可见；换设备或清除浏览器数据后会回到默认内容。</div>';
+    '<div class="pnote">保存会写入服务器，约 1 分钟后所有访客看到的就是新内容。<br>快捷键 Ctrl / ⌘ + Enter 保存。</div>';
   document.getElementById('popEdit').classList.remove('on');
   sfx.tap();
   const list = document.getElementById('ruleEdit');
   const tas = ()=>Array.from(list.querySelectorAll('textarea'));
   const auto = t=>{ t.style.height='auto'; t.style.height=Math.max(52,t.scrollHeight+2)+'px'; };
   tas().forEach(t=>{ auto(t); t.addEventListener('input', ()=>auto(t)); });
-  const last = tas().pop(); if(last) last.focus();
   list.addEventListener('keydown', e=>{
     if(e.key==='Enter' && (e.metaKey||e.ctrlKey)){ e.preventDefault(); document.getElementById('rSave').click(); }
   });
@@ -1170,26 +1176,56 @@ function enterOrderEdit(){
     const t = li.querySelector('textarea'); auto(t); t.focus(); sfx.key();
   });
   document.getElementById('rReset').addEventListener('click', ()=>{
-    if(!confirm('恢复成默认的 5 条须知？（你改过的内容会被清除）')) return;
-    rulesSave([]);
-    popBody.innerHTML = orderRulesHtml();
-    exitOrderEdit(true);
+    if(!confirm('恢复成默认的 5 条须知并保存上线？')) return;
+    RULES = RULES_DEFAULT.slice();
+    doSave();
   });
   document.getElementById('rCancel').addEventListener('click', ()=>{
     popBody.innerHTML = orderRulesHtml();
-    exitOrderEdit(true);
+    document.getElementById('popEdit').classList.add('on');
   });
   document.getElementById('rSave').addEventListener('click', ()=>{
     const arr = tas().map(t=>t.value.trim()).filter(Boolean);
-    const ok = rulesSave(arr);
-    popBody.innerHTML = orderRulesHtml();
-    exitOrderEdit(true);
-    sfx.chime();
-    if(!ok) alert('浏览器拒绝写入本地存储（可能开了无痕模式），本次修改未能保存。');
+    if(!arr.length && !confirm('一条都不留，确定吗？')) return;
+    RULES = arr;
+    doSave();
   });
 }
-function exitOrderEdit(showBtn){
-  document.getElementById('popEdit').classList.toggle('on', !!showBtn && popT.textContent === '下单须知');
+/* 写回 GitHub */
+async function doSave(){
+  const btn = document.getElementById('rSave');
+  const note = popBody.querySelector('.pnote');
+  const busy = t=>{ if(btn){btn.textContent=t;btn.disabled=true;} };
+  const done = ()=>{ if(btn){btn.textContent='保存上线';btn.disabled=false;} };
+  busy('保存中…');
+  try{
+    const cur = await fetch(GH_API + '/contents/rules.json', {
+      headers:{ 'Authorization':'Bearer '+GIT_TOKEN, 'Accept':'application/vnd.github+json' }
+    }).then(r=>r.ok?r.json():null);
+    const body = {
+      message: 'update order rules via page',
+      content: btoa(unescape(encodeURIComponent(JSON.stringify({rules:RULES},null,2))))
+    };
+    if(cur && cur.sha) body.sha = cur.sha;
+    const res = await fetch(GH_API + '/contents/rules.json', {
+      method:'PUT',
+      headers:{ 'Authorization':'Bearer '+GIT_TOKEN, 'Accept':'application/vnd.github+json' },
+      body: JSON.stringify(body)
+    });
+    if(!res.ok){
+      const t = await res.text();
+      throw new Error(res.status + ' ' + t.slice(0,120));
+    }
+    sfx.chime();
+    popBody.innerHTML = orderRulesHtml() +
+      '<div class="pnote" style="margin-top:14px;color:#7fd9ff">已保存 ✓ 约 1 分钟后全网生效（刷新本页可立即看到）</div>';
+    document.getElementById('popEdit').classList.add('on');
+  }catch(err){
+    done();
+    if(note) note.innerHTML = '<span style="color:#ff9f9f">保存失败：' + esc(err.message) + '</span>';
+    else alert('保存失败：' + err.message);
+    sfx.deny();
+  }
 }
 document.getElementById('popEdit').addEventListener('click', e=>{ e.stopPropagation(); enterOrderEdit(); });
 
